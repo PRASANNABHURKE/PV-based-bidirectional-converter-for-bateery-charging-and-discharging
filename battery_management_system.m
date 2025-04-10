@@ -17,6 +17,7 @@ function [batt_current_limited, batt_status, protection_flags] = battery_managem
     protection_flags.undertemperature = false;
     protection_flags.high_soc = false;
     protection_flags.low_soc = false;
+    protection_flags.reverse_polarity = false;
     
     % Default protection thresholds (can be adjusted based on battery chemistry)
     % Voltage protection thresholds
@@ -93,6 +94,21 @@ function [batt_current_limited, batt_status, protection_flags] = battery_managem
                 batt_status = 'Undertemperature Protection';
             end
         end
+    end
+    
+    % Reverse polarity protection
+    % Detect reverse polarity by checking if battery voltage is negative
+    % or if there's an abnormal current flow pattern
+    % In a real system, this would be implemented with hardware (diodes, MOSFETs, etc.)
+    if batt_voltage < 0 || (batt_voltage > 0 && batt_current < -1.5 * max_charge_current)
+        protection_flags.reverse_polarity = true;
+        batt_current_limited = 0;  % Stop all current flow
+        batt_status = 'Reverse Polarity Protection';
+        
+        % In hardware implementation, this would trigger:
+        % 1. Disconnect battery using relay or solid-state switch
+        % 2. Activate alarm or indicator
+        % 3. Log the event for diagnostics
     end
     
     % SOC protection

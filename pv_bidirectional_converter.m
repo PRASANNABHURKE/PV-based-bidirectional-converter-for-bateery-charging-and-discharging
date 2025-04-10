@@ -6,6 +6,10 @@ clear all;
 close all;
 clc;
 
+%% System Configuration
+% Set battery system voltage (24V or 48V)
+battery_system = 24;    % Options: 24 or 48 (Volts)
+
 %% Simulation Parameters
 simulation_time = 2;     % Total simulation time in seconds
 Ts = 1e-5;              % Sampling time in seconds
@@ -26,13 +30,20 @@ G = 1000;               % Solar irradiance in W/m²
 
 %% Battery Parameters
 % Updated to match technical specifications
-Batt_nominal_voltage = 24;  % Nominal battery voltage (V) - Options: 24V or 48V
+Batt_nominal_voltage = battery_system;  % Nominal battery voltage (V) - Options: 24V or 48V
 Batt_capacity = 75;         % Battery capacity (Ah) - Range: 50-100Ah
 Batt_initial_SOC = 50;      % Initial state of charge (%)
 Batt_internal_resistance = 0.01; % Internal resistance (Ohm)
 Batt_temperature = 25;      % Battery temperature in Celsius
-Batt_charging_voltage = 28.8; % Charging voltage for 24V system
-Batt_discharge_cutoff = 21.0; % Discharge cut-off voltage for 24V system
+
+% Set charging and discharge cutoff voltages based on battery system
+if Batt_nominal_voltage == 24
+    Batt_charging_voltage = 28.8;    % Charging voltage for 24V system (1.2 * nominal)
+    Batt_discharge_cutoff = 21.0;    % Discharge cut-off voltage for 24V system (0.875 * nominal)
+elseif Batt_nominal_voltage == 48
+    Batt_charging_voltage = 57.6;    % Charging voltage for 48V system (1.2 * nominal)
+    Batt_discharge_cutoff = 42.0;    % Discharge cut-off voltage for 48V system (0.875 * nominal)
+end
 
 % Battery thermal model parameters
 Batt_thermal_resistance = 10;    % Thermal resistance (°C/W)
@@ -65,6 +76,7 @@ SOC_max = 90;           % Maximum SOC (%)
 pv_voltage = zeros(1, N);
 pv_current = zeros(1, N);
 pv_power = zeros(1, N);
+pv_max_power = zeros(1, N);  % For MPPT efficiency calculation
 
 % Battery variables
 batt_voltage = zeros(1, N);
@@ -77,8 +89,11 @@ batt_temperature(1) = Batt_temperature; % Set initial temperature
 % BMS variables
 batt_status = cell(1, N);
 batt_status{1} = 'Normal';
-protection_flags = struct('overvoltage', false, 'undervoltage', false, 'overcurrent_charge', false, 'overcurrent_discharge', false, 'overtemperature', false, 'undertemperature', false, 'high_soc', false, 'low_soc', false);
+protection_flags = struct('overvoltage', false, 'undervoltage', false, 'overcurrent_charge', false, 'overcurrent_discharge', false, 'overtemperature', false, 'undertemperature', false, 'high_soc', false, 'low_soc', false, 'reverse_polarity', false);
 protection_flags_array(1) = protection_flags;
+
+% MPPT variables
+mppt_efficiency = zeros(1, N);  % Track MPPT efficiency
 
 % Converter variables
 duty_cycle = zeros(1, N);
@@ -117,6 +132,10 @@ for k = 1:N-1
     pv_current(k) = PV_model(pv_voltage(k), G, T, PV_Isc, PV_Voc, PV_Ns, PV_Np);
     pv_power(k) = pv_voltage(k) * pv_current(k);
     
+    % Calculate theoretical maximum power at current irradiance and temperature
+    % This is used for MPPT efficiency calculation
+    pv_max_power(k) = PV_Vmp * PV_Imp * (G/1000);  % Scale by irradiance ratio
+    
     % Calculate load power
     load_voltage(k) = batt_voltage(k);
     load_current(k) = load_voltage(k) / R_load;
@@ -154,6 +173,13 @@ for k = 1:N-1
     [batt_current(k), batt_status{k}, protection_flags] = battery_management_system(batt_voltage(k), batt_current(k), batt_SOC(k), batt_temperature(k), Batt_nominal_voltage, Batt_capacity);
     protection_flags_array(k) = protection_flags;
     
+    % Calculate MPPT efficiency
+    if pv_max_power(k) > 0 && converter_mode(k) == 1  % Only in charging mode
+        mppt_efficiency(k) = (pv_power(k) / pv_max_power(k)) * 100;
+    else
+        mppt_efficiency(k) = 0;
+    end
+    
     % Limit duty cycle
     duty_cycle(k) = max(0.1, min(0.9, duty_cycle(k)));
     
@@ -189,9 +215,26 @@ for k = 1:N-1
 % Calculate final values for the last time step
 pv_current(N) = PV_model(pv_voltage(N), G, T, PV_Isc, PV_Voc, PV_Ns, PV_Np);
 pv_power(N) = pv_voltage(N) * pv_current(N);
+pv_max_power(N) = PV_Vmp * PV_Imp * (G/1000);  % Scale by irradiance ratio
 load_voltage(N) = batt_voltage(N);
 load_current(N) = load_voltage(N) / R_load;
 load_power(N) = load_voltage(N) * load_current(N);
+
+% Calculate MPPT efficiency for the last time step
+if pv_max_power(N) > 0
+    mppt_efficiency(N) = (pv_power(N) / pv_max_power(N)) * 100;
+else
+    mppt_efficiency(N) = 0;
+end
+
+% Calculate average MPPT efficiency
+valid_indices = mppt_efficiency > 0;
+if any(valid_indices)
+    avg_mppt_efficiency = mean(mppt_efficiency(valid_indices));
+    fprintf('Average MPPT Efficiency: %.2f%%\n', avg_mppt_efficiency);
+else
+    fprintf('No valid MPPT efficiency data available.\n');
+end
 
 %% Plot Results
 figure;
@@ -225,7 +268,7 @@ grid on;
 
 subplot(3,2,5);
 plot(t, batt_SOC);
-title('Battery State of Charge');
+title('Battery SOC');
 xlabel('Time (s)');
 ylabel('SOC (%)');
 grid on;
@@ -234,8 +277,21 @@ subplot(3,2,6);
 plot(t, converter_mode);
 title('Converter Mode');
 xlabel('Time (s)');
-ylabel('Mode (1=Charging, -1=Discharging)');
+ylabel('Mode');
+yticks([-1, 0, 1]);
+yticklabels({'Discharging', 'Idle', 'Charging'});
 grid on;
+
+% Display system configuration
+fprintf('\nSystem Configuration:\n');
+fprintf('Battery System: %dV\n', Batt_nominal_voltage);
+fprintf('PV Power Rating: %.1fW\n', PV_power_rating);
+fprintf('Battery Capacity: %.1fAh\n', Batt_capacity);
+fprintf('Converter Switching Frequency: %.1fkHz\n', f_sw/1000);
+fprintf('Converter Efficiency: %.1f%%\n', conv_efficiency*100);
+
+% Call the analyze_results function with all parameters including MPPT efficiency
+analyze_results(t, pv_voltage, pv_current, pv_power, batt_voltage, batt_current, batt_power, batt_SOC, load_power, converter_mode, duty_cycle, batt_status, protection_flags_array, batt_temperature, pv_max_power, mppt_efficiency);
 
 % Create a new figure for battery temperature
 figure;

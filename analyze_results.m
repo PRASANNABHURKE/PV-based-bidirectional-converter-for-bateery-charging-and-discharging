@@ -1,7 +1,7 @@
 %% Analysis and Visualization Script for PV Bidirectional Converter Results
 % This script provides additional analysis and visualization of simulation results
 
-function analyze_results(t, pv_voltage, pv_current, pv_power, batt_voltage, batt_current, batt_power, batt_SOC, load_power, converter_mode, duty_cycle, batt_status, protection_flags_array, batt_temperature)
+function analyze_results(t, pv_voltage, pv_current, pv_power, batt_voltage, batt_current, batt_power, batt_SOC, load_power, converter_mode, duty_cycle, batt_status, protection_flags_array, batt_temperature, pv_max_power, mppt_efficiency)
     % Create a new figure for PV characteristics
     figure('Name', 'PV Characteristics', 'NumberTitle', 'off');
     
@@ -32,7 +32,7 @@ function analyze_results(t, pv_voltage, pv_current, pv_power, batt_voltage, batt
     ylabel('Power (W)');
     grid on;
     
-    % Plot efficiency over time
+    % Plot converter efficiency over time
     subplot(2,2,3);
     % Calculate approximate converter efficiency
     % In charging mode: efficiency = battery power / PV power
@@ -68,6 +68,43 @@ function analyze_results(t, pv_voltage, pv_current, pv_power, batt_voltage, batt
     xlabel('Time (s)');
     ylabel('Energy (J)');
     legend('PV Energy', 'Battery Energy', 'Load Energy', 'Location', 'northwest');
+    grid on;
+    
+    % Create a new figure for MPPT performance
+    figure('Name', 'MPPT Performance', 'NumberTitle', 'off');
+    
+    % Plot MPPT efficiency over time
+    subplot(2,1,1);
+    plot(t, mppt_efficiency, 'g-', 'LineWidth', 1.5);
+    title('MPPT Efficiency Over Time');
+    xlabel('Time (s)');
+    ylabel('Efficiency (%)');
+    ylim([0, 100]);
+    grid on;
+    
+    % Add a horizontal line at 95% to show the required efficiency threshold
+    hold on;
+    plot(t, ones(size(t))*95, 'r--', 'LineWidth', 1);
+    legend('MPPT Efficiency', 'Required Threshold (95%)', 'Location', 'best');
+    
+    % Calculate and display average MPPT efficiency
+    valid_indices = mppt_efficiency > 0;
+    if any(valid_indices)
+        avg_mppt_efficiency = mean(mppt_efficiency(valid_indices));
+        text(0.02, 0.1, ['Average MPPT Efficiency: ' num2str(avg_mppt_efficiency, '%.2f') '%'], ...
+            'Units', 'normalized', 'FontSize', 10, 'FontWeight', 'bold');
+    else
+        text(0.02, 0.1, 'No valid MPPT efficiency data available.', ...
+            'Units', 'normalized', 'FontSize', 10, 'FontWeight', 'bold');
+    end
+    
+    % Plot actual PV power vs maximum theoretical power
+    subplot(2,1,2);
+    plot(t, pv_power, 'b-', t, pv_max_power, 'r--', 'LineWidth', 1.5);
+    title('PV Power Extraction');
+    xlabel('Time (s)');
+    ylabel('Power (W)');
+    legend('Actual PV Power', 'Maximum Theoretical Power', 'Location', 'best');
     grid on;
     
     % Create a new figure for system performance
