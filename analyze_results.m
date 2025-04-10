@@ -1,7 +1,7 @@
 %% Analysis and Visualization Script for PV Bidirectional Converter Results
 % This script provides additional analysis and visualization of simulation results
 
-function analyze_results(t, pv_voltage, pv_current, pv_power, batt_voltage, batt_current, batt_power, batt_SOC, load_power, converter_mode, duty_cycle)
+function analyze_results(t, pv_voltage, pv_current, pv_power, batt_voltage, batt_current, batt_power, batt_SOC, load_power, converter_mode, duty_cycle, batt_status, protection_flags_array, batt_temperature)
     % Create a new figure for PV characteristics
     figure('Name', 'PV Characteristics', 'NumberTitle', 'off');
     
@@ -97,6 +97,99 @@ function analyze_results(t, pv_voltage, pv_current, pv_power, batt_voltage, batt
     ylabel('Power (W)');
     legend('PV Power', 'Battery Power', 'Load Power', 'Location', 'best');
     grid on;
+    
+    % Create a new figure for battery thermal analysis if temperature data is available
+    if exist('batt_temperature', 'var')
+        figure('Name', 'Battery Thermal Analysis', 'NumberTitle', 'off');
+        
+        % Plot battery temperature over time
+        subplot(2,1,1);
+        plot(t, batt_temperature, 'r-', 'LineWidth', 1.5);
+        title('Battery Temperature Over Time');
+        xlabel('Time (s)');
+        ylabel('Temperature (°C)');
+        grid on;
+        
+        % Plot temperature vs. battery current to show heating effect
+        subplot(2,1,2);
+        scatter(batt_current, batt_temperature, 25, t, 'filled');
+        title('Temperature vs. Current (Color = Time)');
+        xlabel('Battery Current (A)');
+        ylabel('Temperature (°C)');
+        colorbar('Title', 'Time (s)');
+        grid on;
+    end
+    
+    % Create a new figure for BMS analysis if BMS data is available
+    if exist('batt_status', 'var') && exist('protection_flags_array', 'var')
+        figure('Name', 'Battery Management System Analysis', 'NumberTitle', 'off');
+        
+        % Plot BMS status over time
+        subplot(2,1,1);
+        % Create a numeric representation of battery status for plotting
+        batt_status_numeric = zeros(1, length(t));
+        for i = 1:length(t)
+            if strcmp(batt_status{i}, 'Normal')
+                batt_status_numeric(i) = 0;
+            elseif contains(batt_status{i}, 'Overvoltage')
+                batt_status_numeric(i) = 1;
+            elseif contains(batt_status{i}, 'Undervoltage')
+                batt_status_numeric(i) = 2;
+            elseif contains(batt_status{i}, 'Charge Current')
+                batt_status_numeric(i) = 3;
+            elseif contains(batt_status{i}, 'Discharge Current')
+                batt_status_numeric(i) = 4;
+            elseif contains(batt_status{i}, 'Temperature')
+                batt_status_numeric(i) = 5;
+            elseif contains(batt_status{i}, 'SOC')
+                batt_status_numeric(i) = 6;
+            end
+        end
+        plot(t, batt_status_numeric, 'LineWidth', 1.5);
+        title('BMS Status Over Time');
+        xlabel('Time (s)');
+        yticks(0:6);
+        yticklabels({'Normal', 'Overvoltage', 'Undervoltage', 'Charge Limit', 'Discharge Limit', 'Temp Limit', 'SOC Limit'});
+        grid on;
+        
+        % Plot protection flags activation
+        subplot(2,1,2);
+        hold on;
+        
+        % Extract protection flags data
+        overvoltage_flags = zeros(1, length(t));
+        undervoltage_flags = zeros(1, length(t));
+        overcurrent_charge_flags = zeros(1, length(t));
+        overcurrent_discharge_flags = zeros(1, length(t));
+        high_soc_flags = zeros(1, length(t));
+        low_soc_flags = zeros(1, length(t));
+        
+        for i = 1:length(t)
+            if isfield(protection_flags_array(i), 'overvoltage')
+                overvoltage_flags(i) = protection_flags_array(i).overvoltage;
+                undervoltage_flags(i) = protection_flags_array(i).undervoltage;
+                overcurrent_charge_flags(i) = protection_flags_array(i).overcurrent_charge;
+                overcurrent_discharge_flags(i) = protection_flags_array(i).overcurrent_discharge;
+                high_soc_flags(i) = protection_flags_array(i).high_soc;
+                low_soc_flags(i) = protection_flags_array(i).low_soc;
+            end
+        end
+        
+        % Plot each protection flag with offset for visibility
+        plot(t, overvoltage_flags * 6, 'LineWidth', 1.5);
+        plot(t, undervoltage_flags * 5, 'LineWidth', 1.5);
+        plot(t, overcurrent_charge_flags * 4, 'LineWidth', 1.5);
+        plot(t, overcurrent_discharge_flags * 3, 'LineWidth', 1.5);
+        plot(t, high_soc_flags * 2, 'LineWidth', 1.5);
+        plot(t, low_soc_flags * 1, 'LineWidth', 1.5);
+        
+        title('Protection Flags Activation');
+        xlabel('Time (s)');
+        yticks(1:6);
+        yticklabels({'Low SOC', 'High SOC', 'Overcurrent Discharge', 'Overcurrent Charge', 'Undervoltage', 'Overvoltage'});
+        grid on;
+        legend('Overvoltage', 'Undervoltage', 'Overcurrent Charge', 'Overcurrent Discharge', 'High SOC', 'Low SOC', 'Location', 'best');
+    end
     
     % Plot duty cycle vs. converter mode
     subplot(2,2,3);

@@ -87,5 +87,27 @@ saveas(fig1, 'scenario4_voltages_currents.fig');
 fig2 = figure(2);
 saveas(fig2, 'scenario4_power_duty.fig');
 
+%% Scenario 5: BMS Protection Demonstration
+disp('\nScenario 5: BMS Protection Demonstration');
+
+% Reset parameters
+R_load = 10;
+Batt_initial_SOC = 90; % High initial SOC to trigger high SOC protection
+
+% Set high irradiance to trigger overcurrent protection
+G_PROFILE = [1200, 1200, 1200, 1200, 1200, 1200, 1200]; % W/m²
+G_TIMES = [0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8]; % seconds
+
+% Run the main simulation
+pv_bidirectional_converter;
+
+% Save the figures for this scenario
+fig1 = figure(1);
+saveas(fig1, 'scenario5_voltages_currents.fig');
+fig2 = figure(2);
+saveas(fig2, 'scenario5_power_duty.fig');
+fig3 = figure(3); % BMS figure
+saveas(fig3, 'scenario5_bms_analysis.fig');
+
 disp('\nAll scenarios completed. Results saved as .fig files.');
 disp('Use "openfig(''filename.fig'')" to view the results.');

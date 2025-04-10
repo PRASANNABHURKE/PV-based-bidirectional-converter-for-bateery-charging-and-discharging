@@ -13,26 +13,44 @@ t = 0:Ts:simulation_time;  % Time vector
 N = length(t);          % Number of simulation points
 
 %% PV Array Parameters
-PV_Voc = 48;            % Open circuit voltage (V)
-PV_Isc = 10;            % Short circuit current (A)
-PV_Vmp = 40;            % Maximum power point voltage (V)
-PV_Imp = 9;             % Maximum power point current (A)
+% Updated to match technical specifications
+PV_Voc = 42;            % Open circuit voltage (V) - Range: 40-45V
+PV_Isc = 10;            % Short circuit current (A) - Range: 9-11A
+PV_Vmp = 35;            % Maximum power point voltage (V) - Range: 30-36V
+PV_Imp = 9;             % Maximum power point current (A) - Range: 8-10A
 PV_Ns = 20;             % Number of series cells
 PV_Np = 2;              % Number of parallel strings
+PV_power_rating = PV_Vmp * PV_Imp; % Power rating (W) - Range: 250-500W
 T = 25;                 % Temperature in Celsius
 G = 1000;               % Solar irradiance in W/m²
 
 %% Battery Parameters
-Batt_nominal_voltage = 24;  % Nominal battery voltage (V)
-Batt_capacity = 100;        % Battery capacity (Ah)
+% Updated to match technical specifications
+Batt_nominal_voltage = 24;  % Nominal battery voltage (V) - Options: 24V or 48V
+Batt_capacity = 75;         % Battery capacity (Ah) - Range: 50-100Ah
 Batt_initial_SOC = 50;      % Initial state of charge (%)
 Batt_internal_resistance = 0.01; % Internal resistance (Ohm)
+Batt_temperature = 25;      % Battery temperature in Celsius
+Batt_charging_voltage = 28.8; % Charging voltage for 24V system
+Batt_discharge_cutoff = 21.0; % Discharge cut-off voltage for 24V system
+
+% Battery thermal model parameters
+Batt_thermal_resistance = 10;    % Thermal resistance (°C/W)
+Batt_thermal_capacitance = 1000; % Thermal capacitance (J/°C)
+Ambient_temperature = 20;        % Ambient temperature (°C)
 
 %% Converter Parameters
+% Updated to match technical specifications
 L = 1e-3;               % Inductor value (H)
 C_in = 470e-6;          % Input capacitor (F)
 C_out = 470e-6;         % Output capacitor (F)
-f_sw = 20e3;            % Switching frequency (Hz)
+f_sw = 50e3;            % Switching frequency (Hz) - Range: 20kHz-100kHz
+max_current = 15;       % Maximum current (A)
+conv_efficiency = 0.92; % Converter efficiency (≥ 90%)
+
+% Converter topology: Non-isolated bidirectional buck-boost
+% Input voltage range: 25V-50V
+% Output voltage range: 24V-48V
 
 %% Load Parameters
 R_load = 10;            % Load resistance (Ohm)
@@ -53,6 +71,14 @@ batt_voltage = zeros(1, N);
 batt_current = zeros(1, N);
 batt_power = zeros(1, N);
 batt_SOC = zeros(1, N);
+batt_temperature = ones(1, N) * Batt_temperature; % Initialize battery temperature array
+batt_temperature(1) = Batt_temperature; % Set initial temperature
+
+% BMS variables
+batt_status = cell(1, N);
+batt_status{1} = 'Normal';
+protection_flags = struct('overvoltage', false, 'undervoltage', false, 'overcurrent_charge', false, 'overcurrent_discharge', false, 'overtemperature', false, 'undertemperature', false, 'high_soc', false, 'low_soc', false);
+protection_flags_array(1) = protection_flags;
 
 % Converter variables
 duty_cycle = zeros(1, N);
@@ -124,14 +150,21 @@ for k = 1:N-1
         duty_cycle(k) = duty_cycle(k-1);
     end
     
+    % Apply Battery Management System (BMS) to protect the battery
+    [batt_current(k), batt_status{k}, protection_flags] = battery_management_system(batt_voltage(k), batt_current(k), batt_SOC(k), batt_temperature(k), Batt_nominal_voltage, Batt_capacity);
+    protection_flags_array(k) = protection_flags;
+    
     % Limit duty cycle
     duty_cycle(k) = max(0.1, min(0.9, duty_cycle(k)));
     
     % Update battery voltage and SOC
     batt_power(k) = batt_voltage(k) * batt_current(k);
     
-    % Use the modular battery model function
-    [batt_voltage(k+1), batt_SOC(k+1)] = battery_model(batt_voltage(k), batt_current(k), batt_SOC(k), Batt_internal_resistance, Batt_capacity, Ts);
+    % Use the modular battery model function with temperature parameter
+    [batt_voltage(k+1), batt_SOC(k+1)] = battery_model(batt_voltage(k), batt_current(k), batt_SOC(k), Batt_internal_resistance, Batt_capacity, Ts, batt_temperature(k));
+    
+    % Update battery temperature using thermal model
+    batt_temperature(k+1) = battery_thermal_model(batt_temperature(k), batt_current(k), batt_voltage(k), Ambient_temperature, Batt_thermal_resistance, Batt_thermal_capacitance, Ts);
     
     % Use the bidirectional converter model to update PV voltage
     [pv_voltage_new, converter_mode_check] = bidirectional_converter_model(pv_power(k), load_power(k), batt_voltage(k), batt_SOC(k), pv_voltage(k), duty_cycle(k), SOC_min, SOC_max);
@@ -204,8 +237,20 @@ xlabel('Time (s)');
 ylabel('Mode (1=Charging, -1=Discharging)');
 grid on;
 
+% Create a new figure for battery temperature
 figure;
-subplot(2,1,1);
+plot(t, batt_temperature, 'r-', 'LineWidth', 1.5);
+title('Battery Temperature');
+xlabel('Time (s)');
+ylabel('Temperature (°C)');
+grid on;
+hold on;
+plot(t, ones(size(t))*Ambient_temperature, 'b--', 'LineWidth', 1);
+legend('Battery Temperature', 'Ambient Temperature');
+
+
+figure;
+subplot(3,1,1);
 plot(t, pv_power, t, load_power, t, batt_power);
 title('Power Flow');
 xlabel('Time (s)');
@@ -213,17 +258,45 @@ ylabel('Power (W)');
 legend('PV Power', 'Load Power', 'Battery Power');
 grid on;
 
-subplot(2,1,2);
+subplot(3,1,2);
 plot(t, duty_cycle);
 title('Duty Cycle');
 xlabel('Time (s)');
 ylabel('Duty Cycle');
 grid on;
 
+% Plot BMS status
+subplot(3,1,3);
+% Create a numeric representation of battery status for plotting
+batt_status_numeric = zeros(1, N);
+for i = 1:N
+    if strcmp(batt_status{i}, 'Normal')
+        batt_status_numeric(i) = 0;
+    elseif contains(batt_status{i}, 'Overvoltage')
+        batt_status_numeric(i) = 1;
+    elseif contains(batt_status{i}, 'Undervoltage')
+        batt_status_numeric(i) = 2;
+    elseif contains(batt_status{i}, 'Charge Current')
+        batt_status_numeric(i) = 3;
+    elseif contains(batt_status{i}, 'Discharge Current')
+        batt_status_numeric(i) = 4;
+    elseif contains(batt_status{i}, 'Temperature')
+        batt_status_numeric(i) = 5;
+    elseif contains(batt_status{i}, 'SOC')
+        batt_status_numeric(i) = 6;
+    end
+end
+plot(t, batt_status_numeric);
+title('BMS Status');
+xlabel('Time (s)');
+yticks(0:6);
+yticklabels({'Normal', 'Overvoltage', 'Undervoltage', 'Charge Limit', 'Discharge Limit', 'Temp Limit', 'SOC Limit'});
+grid on;
+
 %% Additional Analysis
 % Call the analysis function if it exists
 if exist('analyze_results', 'file') == 2
-    analyze_results(t, pv_voltage, pv_current, pv_power, batt_voltage, batt_current, batt_power, batt_SOC, load_power, converter_mode, duty_cycle);
+    analyze_results(t, pv_voltage, pv_current, pv_power, batt_voltage, batt_current, batt_power, batt_SOC, load_power, converter_mode, duty_cycle, batt_status, protection_flags_array, batt_temperature);
 end
 
 %% PV Model Function
